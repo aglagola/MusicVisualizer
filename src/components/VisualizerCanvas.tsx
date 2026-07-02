@@ -1,28 +1,28 @@
 // src/components/VisualizerCanvas.tsx
-// Full-screen canvas component that drives the visual rendering loop
+// Full-screen canvas that drives a single RAF loop: reads audio + renders visuals
 
 import { useRef, useEffect, useCallback } from 'react';
-import { AudioData, VisualizerSettings } from '../types/audio';
+import { AudioEngine } from '../audio/audioEngine';
+import { VisualizerSettings } from '../types/audio';
 import { createRenderer, VisualRenderer } from '../visualizers';
 
 interface Props {
-  audioData: AudioData;
+  /** Direct reference to the audio engine — read each frame, no React state */
+  engineRef: React.MutableRefObject<AudioEngine | null>;
   settings: VisualizerSettings;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
 }
 
-export function VisualizerCanvas({ audioData, settings, canvasRef }: Props) {
+export function VisualizerCanvas({ engineRef, settings, canvasRef }: Props) {
   const rendererRef = useRef<VisualRenderer | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(0);
-  const audioDataRef = useRef<AudioData>(audioData);
   const settingsRef = useRef<VisualizerSettings>(settings);
 
-  // Keep refs current so the animation loop always reads latest values
-  audioDataRef.current = audioData;
+  // Keep settings ref current so the RAF closure always sees latest values
   settingsRef.current = settings;
 
-  /** Resize canvas to match its CSS display size (respects device pixel ratio) */
+  /** Resize canvas to fill its CSS display area at device pixel resolution */
   const resizeCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -33,34 +33,53 @@ export function VisualizerCanvas({ audioData, settings, canvasRef }: Props) {
     if (canvas.width !== newW || canvas.height !== newH) {
       canvas.width = newW;
       canvas.height = newH;
-      // No ctx.scale here — canvas dimensions are already in physical pixels.
-      // Visualizers read ctx.canvas.width/height directly, so they draw in
-      // physical pixel space which maps correctly to the CSS display size.
+      // Canvas dimensions are physical pixels. No ctx.scale needed —
+      // all visualizers draw directly in physical pixel space.
       rendererRef.current?.reset();
     }
   }, [canvasRef]);
 
-  /** Main animation loop — called by requestAnimationFrame at ~60fps */
+  /**
+   * Single RAF loop: reads fresh audio data from the engine, then renders.
+   * Keeping audio reading and rendering in the same loop guarantees they
+   * are always in sync — no two-loop latency or React state batching delays.
+   */
   const animate = useCallback((timestamp: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const dt = Math.min(timestamp - lastTimeRef.current, 50); // cap at 50ms to handle tab switching
+    // Cap dt to 50ms to handle tab-switching pauses gracefully
+    const dt = Math.min(timestamp - lastTimeRef.current, 50);
     lastTimeRef.current = timestamp;
 
-    rendererRef.current?.render(ctx, audioDataRef.current, settingsRef.current, dt);
+    // Read the latest audio data directly from the engine each frame
+    const currentSettings = settingsRef.current;
+    const audioData = engineRef.current
+      ? engineRef.current.getAudioData(currentSettings.sensitivity)
+      : null;
+
+    if (audioData && rendererRef.current) {
+      rendererRef.current.render(ctx, audioData, currentSettings, dt);
+    } else if (rendererRef.current) {
+      // No audio active — still run idle animation with silent data
+      rendererRef.current.render(ctx, {
+        volume: 0, bassEnergy: 0, midEnergy: 0, highEnergy: 0, strumIntensity: 0,
+        frequencyData: new Uint8Array(new ArrayBuffer(0)),
+        waveformData: new Uint8Array(new ArrayBuffer(0)),
+      }, currentSettings, dt);
+    }
+
     animFrameRef.current = requestAnimationFrame(animate);
-  }, [canvasRef]);
+  }, [canvasRef, engineRef]);
 
   // Create/replace renderer when mode changes
   useEffect(() => {
     const prev = rendererRef.current;
     rendererRef.current = createRenderer(settings.mode);
     if (prev) {
-      // Clear canvas on mode change for a clean transition
+      // Hard-clear on mode change for a clean transition
       const canvas = canvasRef.current;
       if (canvas) {
         const ctx = canvas.getContext('2d');
@@ -72,13 +91,12 @@ export function VisualizerCanvas({ audioData, settings, canvasRef }: Props) {
     }
   }, [settings.mode, canvasRef]);
 
-  // Start animation loop once on mount
+  // Start the single RAF loop on mount, wire up resize observer
   useEffect(() => {
     resizeCanvas();
     animFrameRef.current = requestAnimationFrame(animate);
     const observer = new ResizeObserver(resizeCanvas);
     if (canvasRef.current) observer.observe(canvasRef.current);
-
     return () => {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
       observer.disconnect();

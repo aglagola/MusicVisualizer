@@ -26,7 +26,8 @@ export default function App() {
   const [settings, setSettings] = useState<VisualizerSettings>(DEFAULT_SETTINGS);
   const [recordingActive, setRecordingActive] = useState(false);
 
-  const { audioData, micState, error, start, stop, loadFile } = useAudioAnalyzer(settings.sensitivity);
+  // engineRef is exposed directly — no audioData state, no re-renders per frame
+  const { engineRef, micState, error, start, stop, loadFile } = useAudioAnalyzer(settings.sensitivity);
 
   const handleSettingsChange = useCallback((partial: Partial<VisualizerSettings>) => {
     setSettings(prev => ({ ...prev, ...partial }));
@@ -55,7 +56,7 @@ export default function App() {
     }
   }, []);
 
-  // Keep recording state in sync if stopped externally
+  // Poll recording state to keep indicator in sync
   useEffect(() => {
     const interval = setInterval(() => {
       setRecordingActive(getIsRecording());
@@ -65,14 +66,14 @@ export default function App() {
 
   return (
     <div className="relative w-full h-full bg-[#050508] overflow-hidden">
-      {/* Full-screen visualizer canvas */}
+      {/* Full-screen visualizer canvas — reads audio directly from engineRef */}
       <VisualizerCanvas
-        audioData={audioData}
+        engineRef={engineRef}
         settings={settings}
         canvasRef={canvasRef}
       />
 
-      {/* Ambient top title (fades on interaction) */}
+      {/* Ambient top title */}
       <div className="absolute top-5 left-6 pointer-events-none select-none z-10">
         <div className="flex items-center gap-2.5 opacity-60">
           <span className="text-lg">🎸</span>
