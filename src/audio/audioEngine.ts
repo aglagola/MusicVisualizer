@@ -7,6 +7,7 @@ import {
   computeVolume,
   detectStrum,
   smoothValue,
+  clamp,
 } from './audioUtils';
 
 /** Configuration for the AudioEngine */
@@ -45,12 +46,20 @@ export class AudioEngine {
   private smoothedStrum = 0;
   private prevVolume = 0;
 
+  // Auto-gain peak tracking — normalize raw signal against running peak
+  // so quiet rooms still produce full-range visuals
+  private peakVolume = 0.01;
+  private peakBass   = 0.005;
+  private peakMid    = 0.005;
+  private peakHigh   = 0.003;
+
   private readonly fftSize: number;
   private readonly smoothingTimeConstant: number;
 
   constructor(config: AudioEngineConfig = {}) {
     this.fftSize = config.fftSize ?? 2048;
-    this.smoothingTimeConstant = config.smoothingTimeConstant ?? 0.8;
+    // Lower smoothing = snappier FFT data. 0.6 is responsive but still smooth.
+    this.smoothingTimeConstant = config.smoothingTimeConstant ?? 0.6;
   }
 
   /** Initialize the AudioContext and AnalyserNode */
@@ -148,24 +157,31 @@ export class AudioEngine {
     const rawMid = computeBandEnergy(this.frequencyData, sampleRate, this.fftSize, 300, 3000) * sensitivity;
     const rawHigh = computeBandEnergy(this.frequencyData, sampleRate, this.fftSize, 3000, 20000) * sensitivity;
 
-    // Clamp to 0–1
-    const vol = Math.min(1, rawVolume);
-    const bass = Math.min(1, rawBass);
-    const mid = Math.min(1, rawMid);
-    const high = Math.min(1, rawHigh);
+    // Auto-gain: track running peak and normalize so quiet input still
+    // produces full-range visuals. Peak decays slowly so dynamic range is preserved.
+    this.peakVolume = Math.max(this.peakVolume * 0.998, rawVolume, 0.01);
+    const normVolume = clamp(rawVolume / this.peakVolume, 0, 1);
 
-    // Detect strum transient (sudden volume spike)
-    const rawStrum = detectStrum(this.prevVolume, vol);
-    this.prevVolume = vol;
+    this.peakBass = Math.max(this.peakBass * 0.998, rawBass, 0.005);
+    const normBass = clamp(rawBass / this.peakBass, 0, 1);
 
-    // Apply exponential smoothing — different factors for different data:
-    // Volume and strum need fast response; bass can be slower and smoother
-    this.smoothedVolume = smoothValue(this.smoothedVolume, vol, 0.15);
-    this.smoothedBass = smoothValue(this.smoothedBass, bass, 0.12);
-    this.smoothedMid = smoothValue(this.smoothedMid, mid, 0.14);
-    this.smoothedHigh = smoothValue(this.smoothedHigh, high, 0.18);
-    // Strum decays quickly so visuals snap on attack but fade gracefully
-    this.smoothedStrum = Math.max(this.smoothedStrum * 0.88, rawStrum);
+    this.peakMid = Math.max(this.peakMid * 0.998, rawMid, 0.005);
+    const normMid = clamp(rawMid / this.peakMid, 0, 1);
+
+    this.peakHigh = Math.max(this.peakHigh * 0.998, rawHigh, 0.003);
+    const normHigh = clamp(rawHigh / this.peakHigh, 0, 1);
+
+    // Strum detection on normalized volume for consistent sensitivity
+    const rawStrum = detectStrum(this.prevVolume, normVolume, 0.08);
+    this.prevVolume = normVolume;
+
+    // Fast exponential smoothing — high factors = quick visual response
+    this.smoothedVolume = smoothValue(this.smoothedVolume, normVolume, 0.45);
+    this.smoothedBass   = smoothValue(this.smoothedBass,   normBass,   0.40);
+    this.smoothedMid    = smoothValue(this.smoothedMid,    normMid,    0.42);
+    this.smoothedHigh   = smoothValue(this.smoothedHigh,   normHigh,   0.50);
+    // Strum: instant attack, decay at 92% per frame (~200ms half-life at 60fps)
+    this.smoothedStrum  = Math.max(this.smoothedStrum * 0.92, rawStrum);
 
     return {
       volume: this.smoothedVolume,
@@ -197,11 +213,17 @@ export class AudioEngine {
       this.sourceNode = null;
     }
 
-    // Reset smoothed values
+    // Reset smoothed values and auto-gain peaks
     this.smoothedVolume = 0;
     this.smoothedBass = 0;
     this.smoothedMid = 0;
     this.smoothedHigh = 0;
+    this.smoothedStrum = 0;
+    this.prevVolume = 0;
+    this.peakVolume = 0.01;
+    this.peakBass   = 0.005;
+    this.peakMid    = 0.005;
+    this.peakHigh   = 0.003;
     this.smoothedStrum = 0;
     this.prevVolume = 0;
   }

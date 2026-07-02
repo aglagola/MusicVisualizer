@@ -16,7 +16,7 @@ import {
 const DEFAULT_SETTINGS: VisualizerSettings = {
   mode: 'aurora',
   palette: 'aurora',
-  sensitivity: 1.2,
+  sensitivity: 2.0,
   motionIntensity: 1.0,
   bgDarkness: 0.2,
 };
