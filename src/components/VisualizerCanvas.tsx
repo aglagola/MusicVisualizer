@@ -33,9 +33,9 @@ export function VisualizerCanvas({ audioData, settings, canvasRef }: Props) {
     if (canvas.width !== newW || canvas.height !== newH) {
       canvas.width = newW;
       canvas.height = newH;
-      const ctx = canvas.getContext('2d');
-      if (ctx) ctx.scale(dpr, dpr);
-      // Reset renderer when canvas resizes (avoids stale coordinate assumptions)
+      // No ctx.scale here — canvas dimensions are already in physical pixels.
+      // Visualizers read ctx.canvas.width/height directly, so they draw in
+      // physical pixel space which maps correctly to the CSS display size.
       rendererRef.current?.reset();
     }
   }, [canvasRef]);

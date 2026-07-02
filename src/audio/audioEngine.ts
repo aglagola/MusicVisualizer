@@ -62,7 +62,11 @@ export class AudioEngine {
     this.analyserNode.fftSize = this.fftSize;
     // Built-in smoothing from the Web Audio API
     this.analyserNode.smoothingTimeConstant = this.smoothingTimeConstant;
-    this.analyserNode.connect(this.audioContext.destination);
+    // NOTE: do NOT connect analyserNode to destination here.
+    // The analyser is a tap/observer node. For mic input, we connect:
+    //   source → analyserNode  (no destination — avoids speaker feedback)
+    // For file playback, we connect:
+    //   source → analyserNode → destination  (so we hear the audio)
 
     // Pre-allocate buffers
     const bufferLength = this.analyserNode.frequencyBinCount;
